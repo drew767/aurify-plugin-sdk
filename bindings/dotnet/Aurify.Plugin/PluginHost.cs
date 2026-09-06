@@ -142,7 +142,8 @@ public sealed class PluginHost : IDisposable
 
     /// <summary>
     /// One call to the platform on the person's behalf, within the permissions they
-    /// granted. <paramref name="path"/> is absolute, e.g. <c>/api/v1/generation/jobs</c>.
+    /// granted. <paramref name="path"/> is relative to the platform address the client handed
+    /// this process, e.g. <c>/me</c>: who the plugin serves and what it may read.
     /// </summary>
     public JsonNode? CallPlatform(string method, string path, JsonNode? body = null)
     {

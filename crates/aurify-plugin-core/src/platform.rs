@@ -60,7 +60,8 @@ impl PlatformClient {
         })
     }
 
-    /// One call to a platform route. `path` is absolute, e.g. `/api/v1/generation/jobs`.
+    /// One call to a platform route. `path` is relative to the platform address the
+    /// client handed this process, e.g. `/me`: who the plugin serves and what it may read.
     /// A JSON body is sent when given; the answer is parsed as JSON, or `Null` when
     /// the platform answered with no body.
     pub fn call(&self, method: &str, path: &str, body: Option<&Value>) -> Result<Value, PlatformError> {
