@@ -1,0 +1,15 @@
+[package]
+name = "aurify-plugin-ffi"
+description = "C ABI over aurify-plugin-core, built as a shared library for language bindings"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "aurify_plugin"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+aurify-plugin-core = { path = "../aurify-plugin-core" }
+serde_json.workspace = true

@@ -1,0 +1,20 @@
+[workspace]
+resolver = "2"
+members = ["crates/aurify-plugin-core", "crates/aurify-plugin-ffi"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/drew767/aurify-plugin-sdk"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tiny_http = "0.12"
+ureq = { version = "2", default-features = false, features = ["tls"] }
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1

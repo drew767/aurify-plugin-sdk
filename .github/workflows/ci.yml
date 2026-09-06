@@ -1,0 +1,36 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust tests
+        run: cargo test --workspace
+
+      # The bindings load the shared library from target/release; the tests fail
+      # loudly when it is missing, so the build step has to come first.
+      - name: Native library
+        run: cargo build --release -p aurify-plugin-ffi
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: .NET binding tests
+        run: dotnet test bindings/dotnet/Aurify.Plugin.sln --nologo
+
+      - name: Sample builds
+        run: dotnet build samples/hello-plugin --nologo

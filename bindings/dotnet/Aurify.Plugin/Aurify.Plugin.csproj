@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>Aurify.Plugin</RootNamespace>
+    <PackageId>Aurify.Plugin</PackageId>
+    <Description>Write plugins for the Aurify client: manifest, local process protocol, platform calls.</Description>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/drew767/aurify-plugin-sdk</RepositoryUrl>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- Documentation ships for the members that need explaining; a doc comment on
+         PluginHealth.Ready would only restate its name. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <!-- The native library is built by cargo; this project ships whatever the workspace
+       target directory holds. Release first, then debug, so a plain `cargo build` during
+       development is picked up without a release build. -->
+  <PropertyGroup>
+    <AurifyWorkspaceRoot>$(MSBuildThisFileDirectory)../../../</AurifyWorkspaceRoot>
+    <AurifyNativeDir Condition="'$(AurifyNativeDir)' == '' And Exists('$(AurifyWorkspaceRoot)target/release/')">$(AurifyWorkspaceRoot)target/release/</AurifyNativeDir>
+    <AurifyNativeDir Condition="'$(AurifyNativeDir)' == ''">$(AurifyWorkspaceRoot)target/debug/</AurifyNativeDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="$(AurifyNativeDir)aurify_plugin.dll" Condition="Exists('$(AurifyNativeDir)aurify_plugin.dll')" Link="aurify_plugin.dll" CopyToOutputDirectory="PreserveNewest" Pack="true" PackagePath="runtimes/win-x64/native/" />
+    <None Include="$(AurifyNativeDir)libaurify_plugin.so" Condition="Exists('$(AurifyNativeDir)libaurify_plugin.so')" Link="libaurify_plugin.so" CopyToOutputDirectory="PreserveNewest" Pack="true" PackagePath="runtimes/linux-x64/native/" />
+    <None Include="$(AurifyNativeDir)libaurify_plugin.dylib" Condition="Exists('$(AurifyNativeDir)libaurify_plugin.dylib')" Link="libaurify_plugin.dylib" CopyToOutputDirectory="PreserveNewest" Pack="true" PackagePath="runtimes/osx-arm64/native/" />
+  </ItemGroup>
+
+</Project>
