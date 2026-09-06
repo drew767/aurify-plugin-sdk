@@ -4,42 +4,98 @@
   "title": "Aurify plugin manifest",
   "description": "Everything the client reads before installing anything. Anything not declared here is unavailable to the plugin at runtime. The enforcing validator is aurify-plugin-core::Manifest::validate; this schema mirrors it for editors and tooling and carries the cross-reference rules (slots point at declared screens, screens at declared operations) in prose only.",
   "type": "object",
-  "required": ["schemaVersion", "id", "version", "kind", "title"],
+  "required": [
+    "schemaVersion",
+    "id",
+    "version",
+    "kind",
+    "title"
+  ],
   "additionalProperties": false,
   "properties": {
-    "schemaVersion": { "const": 1 },
+    "schemaVersion": {
+      "const": 1
+    },
     "id": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9-]{2,63}$",
       "description": "Stable identifier; never changes across versions."
     },
-    "version": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
     "kind": {
-      "enum": ["app", "plugin"],
+      "enum": [
+        "app",
+        "plugin"
+      ],
       "description": "app: draws its own screen and integrates nowhere. plugin: writes into existing client screens and runs a program on the person's machine."
     },
-    "title": { "type": "string", "minLength": 1, "maxLength": 128 },
-    "summary": { "type": "string", "maxLength": 512 },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "summary": {
+      "type": "string",
+      "maxLength": 512
+    },
     "entry": {
       "type": "object",
-      "description": "Apps only: where the screen comes from. Plugins have no entry.",
-      "required": ["url"],
+      "description": "Where the thing starts. Apps: url of the screen (https). Plugins: program inside the package the client starts, and the runtime that runs it.",
       "additionalProperties": false,
-      "properties": { "url": { "type": "string", "pattern": "^https://" } }
+      "properties": {
+        "url": {
+          "type": "string",
+          "pattern": "^https://"
+        },
+        "program": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runtime": {
+          "type": "string",
+          "enum": [
+            "dotnet"
+          ]
+        }
+      }
     },
     "slots": {
       "type": "array",
       "description": "Plugins only. Every plugin must declare an apps-card slot: it is the only place it can be removed from.",
       "items": {
         "type": "object",
-        "required": ["type"],
+        "required": [
+          "type"
+        ],
         "additionalProperties": false,
         "properties": {
-          "type": { "enum": ["ai-tab", "apps-card", "settings-entry", "message-action"] },
-          "screen": { "type": "string", "description": "Required for every type except message-action; must be a declared screen id." },
-          "operation": { "type": "string", "description": "Required for message-action; must be a declared operation name." },
-          "label": { "type": "string" },
-          "icon": { "type": "string", "description": "Icon name from the client's set; unknown names fall back to the kind icon." }
+          "type": {
+            "enum": [
+              "ai-tab",
+              "apps-card",
+              "settings-entry",
+              "message-action"
+            ]
+          },
+          "screen": {
+            "type": "string",
+            "description": "Required for every type except message-action; must be a declared screen id."
+          },
+          "operation": {
+            "type": "string",
+            "description": "Required for message-action; must be a declared operation name."
+          },
+          "label": {
+            "type": "string"
+          },
+          "icon": {
+            "type": "string",
+            "description": "Icon name from the client's set; unknown names fall back to the kind icon."
+          }
         }
       }
     },
@@ -47,24 +103,56 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["id", "title", "modelOperation"],
+        "required": [
+          "id",
+          "title",
+          "modelOperation"
+        ],
         "additionalProperties": false,
         "properties": {
-          "id": { "type": "string" },
-          "title": { "type": "string" },
-          "modelOperation": { "type": "string", "description": "Declared operation whose result is this screen's model." },
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "modelOperation": {
+            "type": "string",
+            "description": "Declared operation whose result is this screen's model."
+          },
           "components": {
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["type"],
+              "required": [
+                "type"
+              ],
               "additionalProperties": false,
               "properties": {
-                "type": { "enum": ["text", "list", "toggle", "button", "progress"] },
-                "bind": { "type": "string", "description": "Path into the screen's model. Required for list, toggle and progress." },
-                "label": { "type": "string" },
-                "operation": { "type": "string", "description": "Declared operation run when the component is activated." },
-                "item": { "type": "object", "description": "For list: which item fields are the title, subtitle, and so on." }
+                "type": {
+                  "enum": [
+                    "text",
+                    "list",
+                    "toggle",
+                    "button",
+                    "progress"
+                  ]
+                },
+                "bind": {
+                  "type": "string",
+                  "description": "Path into the screen's model. Required for list, toggle and progress."
+                },
+                "label": {
+                  "type": "string"
+                },
+                "operation": {
+                  "type": "string",
+                  "description": "Declared operation run when the component is activated."
+                },
+                "item": {
+                  "type": "object",
+                  "description": "For list: which item fields are the title, subtitle, and so on."
+                }
               }
             }
           }
@@ -75,32 +163,59 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["name"],
+        "required": [
+          "name"
+        ],
         "additionalProperties": false,
         "properties": {
-          "name": { "type": "string" },
-          "description": { "type": "string" },
-          "args": { "type": "object", "description": "JSON Schema of the arguments; carried, not validated by the SDK." }
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "args": {
+            "type": "object",
+            "description": "JSON Schema of the arguments; carried, not validated by the SDK."
+          }
         }
       }
     },
     "permissions": {
       "type": "array",
       "description": "Data kinds the plugin will ask for through the client's permission popup. Anything not listed cannot be asked for.",
-      "items": { "type": "string", "pattern": "^[a-z][a-z0-9_.]{2,63}$" }
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_.]{2,63}$"
+      }
     },
     "resources": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "diskBytes": { "type": "integer", "minimum": 0 },
-        "gpu": { "enum": ["none", "optional", "required"] }
+        "diskBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "gpu": {
+          "enum": [
+            "none",
+            "optional",
+            "required"
+          ]
+        }
       }
     },
     "probe": {
       "type": "object",
       "additionalProperties": false,
-      "properties": { "timeoutSeconds": { "type": "integer", "minimum": 1, "default": 30 } }
+      "properties": {
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 30
+        }
+      }
     },
     "uninstall": {
       "type": "object",
@@ -109,7 +224,9 @@
         "removePaths": {
           "type": "array",
           "description": "Paths relative to the plugin's data directory, removed with the package.",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         }
       }
     }

@@ -16,7 +16,7 @@ pub mod platform;
 
 pub use launch::{LaunchContext, LaunchError, LaunchValues};
 pub use local_server::{Health, HealthStatus, LocalServer, OperationError, OperationHandler, StartError};
-pub use manifest::{Kind, Manifest};
+pub use manifest::{Entry, Kind, Manifest};
 pub use platform::{PlatformClient, PlatformError};
 
 /// Version of this crate, reported by bindings so a mismatch between the native

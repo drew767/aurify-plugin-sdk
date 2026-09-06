@@ -23,6 +23,14 @@ The enforcing validator for the manifest is Rust code, not the JSON Schema: the 
 rules run in your build, in the client before install, and in catalog review, so a
 manifest that passes locally is not refused later.
 
+## How the client starts a plugin
+
+The package you publish is a directory; `entry.program` names the file in it the client
+starts, and `entry.runtime` what runs it (`dotnet`, or nothing for an executable of its
+own). The client starts that program with the launch environment described above and
+waits for its health probe. A manifest without an entry is refused: a package the client
+cannot start is a package nobody can use.
+
 ## Where a plugin may appear
 
 Four places, and the list is closed — the client renders only what it knows.

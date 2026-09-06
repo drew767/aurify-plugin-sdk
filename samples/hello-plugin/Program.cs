@@ -23,6 +23,8 @@ var manifest = new PluginManifest
     Version = "0.1.0",
     Title = "Hello",
     Summary = "Greets by name and keeps a short list of who was greeted.",
+    // The file in the published package the client starts, and what runs it.
+    Entry = new ManifestEntry { Program = "hello-plugin.dll", Runtime = Runtimes.Dotnet },
     Slots =
     [
         new PluginSlot { Type = SlotTypes.AppsCard, Screen = "main" },

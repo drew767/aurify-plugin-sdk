@@ -325,6 +325,7 @@ mod tests {
         CString::new(
             json!({
                 "schemaVersion": 1, "id": "echo", "version": "1", "kind": "plugin", "title": "Echo",
+                "entry": {"program": "echo"},
                 "slots": [{"type": "apps-card", "screen": "main"}],
                 "screens": [{"id": "main", "title": "Main", "modelOperation": "echo", "components": []}],
                 "operations": [{"name": "echo"}, {"name": "fail"}]
@@ -361,7 +362,7 @@ mod tests {
 
     #[test]
     fn validation_reports_through_the_c_boundary() {
-        let broken = CString::new(r#"{"schemaVersion":1,"id":"x","version":"1","kind":"plugin","title":"X"}"#).unwrap();
+        let broken = CString::new(r#"{"schemaVersion":1,"id":"x","version":"1","kind":"plugin","title":"X","entry":{"program":"x"}}"#).unwrap();
         unsafe {
             let errors = aurify_plugin_manifest_validate(broken.as_ptr());
             assert!(!errors.is_null());

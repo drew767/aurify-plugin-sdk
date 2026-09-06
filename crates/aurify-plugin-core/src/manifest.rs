@@ -23,6 +23,10 @@ pub const REQUIRED_SLOT: &str = "apps-card";
 /// Declarative components the client can draw. Closed for the same reason as slots.
 pub const COMPONENT_TYPES: &[&str] = &["text", "list", "toggle", "button", "progress"];
 
+/// Runtimes the client knows how to start a plugin's program with. Absent means the
+/// program is an executable of its own.
+pub const RUNTIMES: &[&str] = &["dotnet"];
+
 pub const MAX_TITLE_CHARS: usize = 128;
 pub const MAX_SUMMARY_CHARS: usize = 512;
 pub const MAX_VERSION_CHARS: usize = 64;
@@ -143,12 +147,22 @@ pub struct Uninstall {
     pub remove_paths: Vec<String>,
 }
 
-/// Where an app's screen comes from. Apps have no package: the code lives with the
-/// author and never reaches the machine.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Where the thing starts. An app names the address of its screen: it has no package,
+/// the code lives with the author. A plugin names the program inside its package that
+/// the client starts, and the runtime that runs it — without this the client would have
+/// a package on disk and no way to know which file in it is the plugin.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AppEntry {
-    pub url: String,
+pub struct Entry {
+    /// Apps: the screen's address, https only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// Plugins: path of the program inside the package, relative to the package root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub program: Option<String>,
+    /// Plugins: one of [`RUNTIMES`], or absent for a program that is an executable itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -179,7 +193,7 @@ pub struct Manifest {
     #[serde(default)]
     pub uninstall: Uninstall,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub entry: Option<AppEntry>,
+    pub entry: Option<Entry>,
 }
 
 impl Manifest {
@@ -243,10 +257,13 @@ impl Manifest {
     }
 
     fn validate_app(&self, errors: &mut Vec<String>) {
-        match &self.entry {
-            Some(entry) if entry.url.starts_with("https://") => {}
+        match self.entry.as_ref().and_then(|entry| entry.url.as_deref()) {
+            Some(url) if url.starts_with("https://") => {}
             Some(_) => errors.push("entry.url must start with https://".to_string()),
             None => errors.push("an app must declare entry.url".to_string()),
+        }
+        if self.entry.as_ref().is_some_and(|entry| entry.program.is_some() || entry.runtime.is_some()) {
+            errors.push("an app has no entry.program: its code lives at a URL, not on the machine".to_string());
         }
         if !self.slots.is_empty() {
             errors.push("an app declares no slots: it draws its own screen and integrates nowhere".to_string());
@@ -254,7 +271,19 @@ impl Manifest {
     }
 
     fn validate_plugin(&self, errors: &mut Vec<String>) {
-        if self.entry.is_some() {
+        match self.entry.as_ref().and_then(|entry| entry.program.as_deref()) {
+            Some(program) if is_package_relative_path(program) => {}
+            Some(program) => errors.push(format!(
+                "entry.program must be a path inside the package, without leading slash, drive or \"..\", got {program:?}"
+            )),
+            None => errors.push("a plugin must declare entry.program: the file in its package the client starts".to_string()),
+        }
+        if let Some(runtime) = self.entry.as_ref().and_then(|entry| entry.runtime.as_deref()) {
+            if !RUNTIMES.contains(&runtime) {
+                errors.push(format!("entry.runtime must be one of {RUNTIMES:?}, got {runtime:?}"));
+            }
+        }
+        if self.entry.as_ref().is_some_and(|entry| entry.url.is_some()) {
             errors.push("a plugin has no entry.url: its code runs on the machine, not at a URL".to_string());
         }
 
@@ -336,6 +365,15 @@ fn is_valid_id(id: &str) -> bool {
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
+fn is_package_relative_path(path: &str) -> bool {
+    !path.is_empty()
+        && !path.starts_with('/')
+        && !path.contains('\\')
+        && !path.contains(':')
+        && !path.contains('\0')
+        && path.split('/').all(|segment| !segment.is_empty() && segment != "." && segment != "..")
+}
+
 fn is_valid_scope(scope: &str) -> bool {
     let length = scope.len();
     if !(3..=64).contains(&length) {
@@ -358,6 +396,7 @@ mod tests {
             "version": "0.3.0",
             "kind": "plugin",
             "title": "Local AI",
+            "entry": {"program": "StudioGeneration.Api.dll", "runtime": "dotnet"},
             "slots": [
                 {"type": "apps-card", "screen": "main"},
                 {"type": "ai-tab", "screen": "main", "label": "Local models", "icon": "hard-drive"},
@@ -421,6 +460,30 @@ mod tests {
         let errors = manifest.validate();
         assert!(errors.iter().any(|e| e.starts_with("id must match")), "{errors:?}");
         assert!(errors.iter().any(|e| e.starts_with("permission \"Chats/Read\"")), "{errors:?}");
+    }
+
+    #[test]
+    fn a_plugin_names_the_program_the_client_starts_and_it_stays_inside_the_package() {
+        let mut manifest = Manifest::from_json(&plugin_json()).unwrap();
+        manifest.entry = None;
+        let errors = manifest.validate();
+        assert!(errors.iter().any(|e| e.starts_with("a plugin must declare entry.program")), "{errors:?}");
+
+        for escaping in ["../host.dll", "/usr/bin/host", "C:/host.exe", "bin\\host.exe", ""] {
+            let mut manifest = Manifest::from_json(&plugin_json()).unwrap();
+            manifest.entry = Some(Entry { program: Some(escaping.into()), ..Entry::default() });
+            let errors = manifest.validate();
+            assert!(errors.iter().any(|e| e.starts_with("entry.program must be a path inside the package")), "{escaping:?}: {errors:?}");
+        }
+
+        let mut manifest = Manifest::from_json(&plugin_json()).unwrap();
+        manifest.entry = Some(Entry { program: Some("bin/host".into()), runtime: Some("java".into()), url: None });
+        let errors = manifest.validate();
+        assert!(errors.iter().any(|e| e.starts_with("entry.runtime must be one of")), "{errors:?}");
+
+        let mut manifest = Manifest::from_json(&plugin_json()).unwrap();
+        manifest.entry = Some(Entry { program: Some("bin/host".into()), runtime: None, url: None });
+        assert_eq!(manifest.validate(), Vec::<String>::new());
     }
 
     #[test]

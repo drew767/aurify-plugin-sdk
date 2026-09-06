@@ -86,9 +86,24 @@ public sealed class PluginUninstall
     public IReadOnlyList<string> RemovePaths { get; init; } = [];
 }
 
-public sealed class AppEntry
+/// <summary>
+/// Where the thing starts. An app names the address of its screen. A plugin names the
+/// program inside its package that the client starts, and the runtime that runs it.
+/// </summary>
+public sealed class ManifestEntry
 {
-    public required string Url { get; init; }
+    /// <summary>Apps: the screen's address, https only.</summary>
+    public string? Url { get; init; }
+    /// <summary>Plugins: path of the program inside the package, relative to the package root.</summary>
+    public string? Program { get; init; }
+    /// <summary>Plugins: <see cref="Runtimes"/> entry, or null for a program that is an executable itself.</summary>
+    public string? Runtime { get; init; }
+}
+
+/// <summary>Runtimes the client knows how to start a plugin's program with.</summary>
+public static class Runtimes
+{
+    public const string Dotnet = "dotnet";
 }
 
 /// <summary>
@@ -114,7 +129,7 @@ public sealed class PluginManifest
     public PluginResources Resources { get; init; } = new();
     public PluginProbe Probe { get; init; } = new();
     public PluginUninstall Uninstall { get; init; } = new();
-    public AppEntry? Entry { get; init; }
+    public ManifestEntry? Entry { get; init; }
 
     internal static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {

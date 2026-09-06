@@ -15,6 +15,7 @@ public sealed class PluginHostTests
         Id = "hello",
         Version = "1.0.0",
         Title = "Hello",
+        Entry = new ManifestEntry { Program = "hello-plugin.dll", Runtime = Runtimes.Dotnet },
         Slots = [new PluginSlot { Type = SlotTypes.AppsCard, Screen = "main" }],
         Screens =
         [

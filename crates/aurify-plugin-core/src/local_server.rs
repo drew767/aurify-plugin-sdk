@@ -288,6 +288,7 @@ mod tests {
         Manifest::from_json(
             &json!({
                 "schemaVersion": 1, "id": "hello", "version": "1", "kind": "plugin", "title": "Hello",
+                "entry": {"program": "hello"},
                 "slots": [{"type": "apps-card", "screen": "main"}],
                 "screens": [{"id": "main", "title": "Main", "modelOperation": "main.model", "components": []}],
                 "operations": [{"name": "main.model"}, {"name": "greet"}]
