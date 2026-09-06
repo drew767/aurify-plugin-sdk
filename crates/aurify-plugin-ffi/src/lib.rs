@@ -108,11 +108,17 @@ pub unsafe extern "C" fn aurify_plugin_manifest_validate(manifest_json: *const c
     }
 }
 
-/// Starts the plugin: reads the launch environment, validates the manifest, binds the
-/// local server. Returns NULL and fills `error_out` on failure.
+/// Starts the plugin: validates the manifest, reads the launch context, binds the local
+/// server. Returns NULL and fills `error_out` on failure.
+///
+/// `launch_json` carries the launch values as JSON (`port`, `secret`, `platformUrl`,
+/// `platformToken`, `dataDir`); NULL reads them from this process's environment. A
+/// binding passes them explicitly, because its runtime does not always share the
+/// environment with this library — .NET on Unix keeps its own copy.
 #[no_mangle]
 pub unsafe extern "C" fn aurify_plugin_host_start(
     manifest_json: *const c_char,
+    launch_json: *const c_char,
     on_operation: Option<AurifyPluginOperationFn>,
     user_data: *mut c_void,
     error_out: *mut *mut c_char,
@@ -132,7 +138,11 @@ pub unsafe extern "C" fn aurify_plugin_host_start(
             return ptr::null_mut();
         }
     };
-    let ctx = match LaunchContext::from_env() {
+    let launch = match from_c_str(launch_json) {
+        Some(json) => LaunchContext::from_json(json),
+        None => LaunchContext::from_env(),
+    };
+    let ctx = match launch {
         Ok(ctx) => ctx,
         Err(error) => {
             put_error(error_out, &error.to_string());
@@ -333,13 +343,13 @@ mod tests {
     #[test]
     fn a_host_serves_operations_through_the_callback() {
         let port = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port();
-        std::env::set_var("AURIFY_PLUGIN_PORT", port.to_string());
-        std::env::set_var("AURIFY_PLUGIN_SECRET", "0123456789abcdef");
+        let launch = CString::new(json!({ "port": port.to_string(), "secret": "0123456789abcdef" }).to_string()).unwrap();
         let mut calls: u32 = 0;
         let mut error: *mut c_char = ptr::null_mut();
         unsafe {
             let host = aurify_plugin_host_start(
                 manifest().as_ptr(),
+                launch.as_ptr(),
                 Some(echo_operation),
                 &mut calls as *mut u32 as *mut c_void,
                 &mut error,
@@ -361,7 +371,18 @@ mod tests {
             aurify_plugin_host_stop(ptr::null_mut());
         }
         assert_eq!(calls, 2);
+    }
+
+    #[test]
+    fn a_null_launch_reads_the_environment_and_says_what_is_missing() {
         std::env::remove_var("AURIFY_PLUGIN_PORT");
-        std::env::remove_var("AURIFY_PLUGIN_SECRET");
+        let mut error: *mut c_char = ptr::null_mut();
+        unsafe {
+            let host = aurify_plugin_host_start(manifest().as_ptr(), ptr::null(), Some(echo_operation), ptr::null_mut(), &mut error);
+            assert!(host.is_null());
+            let text = CStr::from_ptr(error).to_str().unwrap().to_string();
+            aurify_plugin_string_free(error);
+            assert!(text.contains("AURIFY_PLUGIN_PORT"), "{text}");
+        }
     }
 }

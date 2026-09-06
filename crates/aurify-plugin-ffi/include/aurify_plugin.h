@@ -39,10 +39,14 @@ void aurify_plugin_string_free(char *text);
 /* NULL when the manifest is valid; otherwise a JSON array of messages. */
 char *aurify_plugin_manifest_validate(const char *manifest_json);
 
-/* Reads AURIFY_PLUGIN_* from the environment, validates the manifest, binds
- * 127.0.0.1:AURIFY_PLUGIN_PORT. On failure returns NULL and, when error_out is not NULL,
- * stores a message in it. */
+/* Validates the manifest, reads the launch context, binds 127.0.0.1:port.
+ * launch_json carries {"port","secret","platformUrl","platformToken","dataDir"} as
+ * strings; NULL reads AURIFY_PLUGIN_* from this process's environment. Bindings pass
+ * the values explicitly: their runtime does not always share the environment with
+ * this library (.NET on Unix keeps its own copy).
+ * On failure returns NULL and, when error_out is not NULL, stores a message in it. */
 AurifyPluginHost *aurify_plugin_host_start(const char *manifest_json,
+                                           const char *launch_json,
                                            aurify_plugin_operation_fn on_operation,
                                            void *user_data,
                                            char **error_out);

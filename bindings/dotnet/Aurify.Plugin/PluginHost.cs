@@ -25,6 +25,45 @@ public sealed class PluginStartException(string message) : Exception(message);
 public sealed class PlatformCallException(string message) : Exception(message);
 
 /// <summary>
+/// What the client hands the process when it starts it. Read here, in managed code,
+/// and passed to the native library explicitly: on Unix the .NET runtime keeps its own
+/// copy of the environment and never calls <c>setenv</c>, so a variable set from C#
+/// would be invisible to the library if it read the environment itself.
+/// </summary>
+public sealed class PluginLaunch
+{
+    public const string PortVariable = "AURIFY_PLUGIN_PORT";
+    public const string SecretVariable = "AURIFY_PLUGIN_SECRET";
+    public const string PlatformUrlVariable = "AURIFY_PLATFORM_URL";
+    public const string PlatformTokenVariable = "AURIFY_PLATFORM_TOKEN";
+    public const string DataDirVariable = "AURIFY_PLUGIN_DATA_DIR";
+
+    public string? Port { get; init; }
+    public string? Secret { get; init; }
+    public string? PlatformUrl { get; init; }
+    public string? PlatformToken { get; init; }
+    public string? DataDir { get; init; }
+
+    public static PluginLaunch FromEnvironment() => new()
+    {
+        Port = Environment.GetEnvironmentVariable(PortVariable),
+        Secret = Environment.GetEnvironmentVariable(SecretVariable),
+        PlatformUrl = Environment.GetEnvironmentVariable(PlatformUrlVariable),
+        PlatformToken = Environment.GetEnvironmentVariable(PlatformTokenVariable),
+        DataDir = Environment.GetEnvironmentVariable(DataDirVariable),
+    };
+
+    internal string ToJson() => new JsonObject
+    {
+        ["port"] = Port,
+        ["secret"] = Secret,
+        ["platformUrl"] = PlatformUrl,
+        ["platformToken"] = PlatformToken,
+        ["dataDir"] = DataDir,
+    }.ToJsonString();
+}
+
+/// <summary>
 /// A running plugin: the local server the client talks to, and the platform client for
 /// calls made on the person's behalf.
 /// </summary>
@@ -58,15 +97,21 @@ public sealed class PluginHost : IDisposable
     /// local server. Throws when started by hand: the plugin only makes sense inside the
     /// client, and saying so beats a process that listens on nothing.
     /// </summary>
-    public static PluginHost Start(PluginManifest manifest, OperationHandler handler)
+    public static PluginHost Start(PluginManifest manifest, OperationHandler handler) =>
+        Start(manifest, PluginLaunch.FromEnvironment(), handler);
+
+    /// <summary>Same, with the launch values given explicitly instead of read from the environment.</summary>
+    public static PluginHost Start(PluginManifest manifest, PluginLaunch launch, OperationHandler handler)
     {
         ArgumentNullException.ThrowIfNull(manifest);
+        ArgumentNullException.ThrowIfNull(launch);
         ArgumentNullException.ThrowIfNull(handler);
 
         var host = new PluginHost(handler);
         using var manifestArg = new Native.Utf8Arg(manifest.ToJson());
+        using var launchArg = new Native.Utf8Arg(launch.ToJson());
         var pointer = Native.aurify_plugin_host_start(
-            manifestArg.Pointer, Trampoline, GCHandle.ToIntPtr(host._self), out var errorOut);
+            manifestArg.Pointer, launchArg.Pointer, Trampoline, GCHandle.ToIntPtr(host._self), out var errorOut);
         if (pointer == IntPtr.Zero)
         {
             host._self.Free();

@@ -14,7 +14,7 @@ pub mod local_server;
 pub mod manifest;
 pub mod platform;
 
-pub use launch::{LaunchContext, LaunchError};
+pub use launch::{LaunchContext, LaunchError, LaunchValues};
 pub use local_server::{Health, HealthStatus, LocalServer, OperationError, OperationHandler, StartError};
 pub use manifest::{Kind, Manifest};
 pub use platform::{PlatformClient, PlatformError};

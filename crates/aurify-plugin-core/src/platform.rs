@@ -109,15 +109,17 @@ mod tests {
 
     /// A one-shot HTTP/1.1 responder: enough to see what the client sent and to hand a
     /// renewed token back.
+    ///
+    /// It reads the whole request, body included, before answering. Closing a socket
+    /// with unread bytes makes Windows send a reset instead of a graceful close, and the
+    /// client then sees a dropped connection where the test expects a 403.
     fn serve_once(status: u16, extra_header: &str, body: &str) -> (u16, thread::JoinHandle<String>) {
         let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let port = listener.local_addr().unwrap().port();
         let (status, extra_header, body) = (status, extra_header.to_string(), body.to_string());
         let handle = thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
-            let mut buffer = vec![0u8; 8192];
-            let read = stream.read(&mut buffer).unwrap();
-            let received = String::from_utf8_lossy(&buffer[..read]).to_string();
+            let received = read_full_request(&mut stream);
             let reply = format!(
                 "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n{extra_header}\r\n{body}",
                 body.len()
@@ -126,6 +128,34 @@ mod tests {
             received
         });
         (port, handle)
+    }
+
+    fn read_full_request(stream: &mut std::net::TcpStream) -> String {
+        let mut raw: Vec<u8> = Vec::new();
+        let mut chunk = [0u8; 4096];
+        let header_end = loop {
+            let read = stream.read(&mut chunk).unwrap();
+            if read == 0 {
+                return String::from_utf8_lossy(&raw).to_string();
+            }
+            raw.extend_from_slice(&chunk[..read]);
+            if let Some(at) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
+                break at + 4;
+            }
+        };
+        let head = String::from_utf8_lossy(&raw[..header_end]).to_string();
+        let content_length: usize = head
+            .lines()
+            .find_map(|line| line.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse().unwrap_or(0)))
+            .unwrap_or(0);
+        while raw.len() < header_end + content_length {
+            let read = stream.read(&mut chunk).unwrap();
+            if read == 0 {
+                break;
+            }
+            raw.extend_from_slice(&chunk[..read]);
+        }
+        String::from_utf8_lossy(&raw).to_string()
     }
 
     fn client(port: u16) -> PlatformClient {

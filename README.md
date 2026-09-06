@@ -67,6 +67,13 @@ local server. Run by hand — outside the client — it throws and says which va
 missing: a plugin only makes sense inside the client, and saying so beats a process that
 listens on nothing.
 
+The binding reads the environment itself and hands the values to the native library
+explicitly. That is not a convenience: on Unix the .NET runtime keeps its own copy of the
+environment and never calls `setenv`, so a library reading the environment on its own
+would not see what the managed side set. A binding in another language should do the
+same — `aurify_plugin_host_start` takes the launch values as JSON, and only reads the
+environment when given `NULL`.
+
 ## Layout
 
 ```

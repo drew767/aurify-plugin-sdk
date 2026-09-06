@@ -29,7 +29,7 @@ internal static class Native
     public static extern IntPtr aurify_plugin_manifest_validate(IntPtr manifestJson);
 
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-    public static extern IntPtr aurify_plugin_host_start(IntPtr manifestJson, OperationFn onOperation, IntPtr userData, out IntPtr errorOut);
+    public static extern IntPtr aurify_plugin_host_start(IntPtr manifestJson, IntPtr launchJson, OperationFn onOperation, IntPtr userData, out IntPtr errorOut);
 
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
     public static extern ushort aurify_plugin_host_port(IntPtr host);
