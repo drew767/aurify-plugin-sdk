@@ -80,7 +80,9 @@ public sealed class PluginHost : IDisposable
     private static readonly Native.OperationFn Trampoline = OnOperation;
 
     private readonly OperationHandler _handler;
-    private readonly GCHandle _self;
+    // Not readonly on purpose: GCHandle is a struct, and Free() on a readonly field runs
+    // on a copy, leaving the field claiming to be allocated after the handle is gone.
+    private GCHandle _self;
     private IntPtr _host;
 
     private PluginHost(OperationHandler handler)
@@ -115,6 +117,7 @@ public sealed class PluginHost : IDisposable
         if (pointer == IntPtr.Zero)
         {
             host._self.Free();
+            host._self = default;
             throw new PluginStartException(Native.TakeString(errorOut) ?? "the native library refused to start");
         }
         host._host = pointer;
@@ -162,7 +165,11 @@ public sealed class PluginHost : IDisposable
             Native.aurify_plugin_host_stop(_host);
             _host = IntPtr.Zero;
         }
-        if (_self.IsAllocated) _self.Free();
+        if (_self.IsAllocated)
+        {
+            _self.Free();
+            _self = default;
+        }
         GC.SuppressFinalize(this);
     }
 

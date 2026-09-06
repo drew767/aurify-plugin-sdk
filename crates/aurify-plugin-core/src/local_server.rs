@@ -38,6 +38,11 @@ pub const MAX_BODY_BYTES: usize = 1024 * 1024;
 /// How long the accept loop waits before checking whether it was asked to stop.
 const ACCEPT_POLL: Duration = Duration::from_millis(200);
 
+/// The server thread runs the plugin's operation handler, and through a binding that
+/// handler runs in a managed runtime whose JIT and GC borrow the calling thread's stack.
+/// The 2 MiB a Rust thread gets by default is enough for Rust and not always for that.
+const SERVER_THREAD_STACK_BYTES: usize = 8 * 1024 * 1024;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum HealthStatus {
@@ -124,6 +129,7 @@ impl LocalServer {
             let stop = Arc::clone(&stop);
             thread::Builder::new()
                 .name("aurify-plugin-local-server".into())
+                .stack_size(SERVER_THREAD_STACK_BYTES)
                 .spawn(move || {
                     while !stop.load(Ordering::Relaxed) {
                         match server.recv_timeout(ACCEPT_POLL) {
