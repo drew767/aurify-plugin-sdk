@@ -158,13 +158,19 @@ public sealed class PluginHost : IDisposable
         return text is null ? null : JsonNode.Parse(text);
     }
 
+    /// <summary>
+    /// Stops the local server and waits for its thread. Safe to call again, from any
+    /// thread, while a first call is still waiting: only the caller that takes the
+    /// native handle stops it, so the library never sees the same host twice.
+    /// </summary>
     public void Dispose()
     {
-        if (_host != IntPtr.Zero)
+        var host = Interlocked.Exchange(ref _host, IntPtr.Zero);
+        if (host == IntPtr.Zero)
         {
-            Native.aurify_plugin_host_stop(_host);
-            _host = IntPtr.Zero;
+            return;
         }
+        Native.aurify_plugin_host_stop(host);
         if (_self.IsAllocated)
         {
             _self.Free();

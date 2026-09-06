@@ -97,6 +97,25 @@ public sealed class PluginHostTests
     }
 
     [Fact]
+    public async Task Disposing_from_two_threads_at_once_stops_the_host_once_and_closes_the_port()
+    {
+        using var launch = new Launch();
+        var host = PluginHost.Start(Manifest(), (_, _) => null);
+        using (var client = ClientFor(host.Port))
+        {
+            Assert.Contains("\"starting\"", await client.GetStringAsync("plugin/v1/health"));
+        }
+
+        var first = Task.Run(host.Dispose);
+        var second = Task.Run(host.Dispose);
+        await Task.WhenAll(first, second);
+
+        Assert.Equal(0, host.Port);
+        using var probe = new TcpClient();
+        await Assert.ThrowsAnyAsync<SocketException>(() => probe.ConnectAsync(IPAddress.Loopback, launch.Port));
+    }
+
+    [Fact]
     public async Task Health_is_starting_until_the_plugin_says_otherwise()
     {
         using var launch = new Launch();

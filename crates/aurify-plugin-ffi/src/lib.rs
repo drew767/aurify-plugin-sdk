@@ -12,9 +12,11 @@
 
 #![allow(clippy::missing_safety_doc)]
 
+use std::collections::HashMap;
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::ptr;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use aurify_plugin_core::{
     HealthStatus, LaunchContext, LocalServer, Manifest, OperationError, OperationHandler,
@@ -33,6 +35,35 @@ pub type AurifyPluginOperationFn =
 pub struct AurifyPluginHost {
     server: LocalServer,
     platform: Option<PlatformClient>,
+}
+
+/// The pointer handed across the C boundary is a key into this table, never the host's
+/// address. Stopping joins the server thread, and a binding that disposes from two
+/// threads at once used to hand the same pointer to `host_stop` twice: the second call
+/// freed the host under the first, which then read freed memory once the join returned.
+/// A key leaves the table before teardown begins, so the second call finds nothing, and
+/// keys are never reused, so a stale one cannot name a host started later.
+static HOSTS: OnceLock<Mutex<HashMap<usize, Arc<AurifyPluginHost>>>> = OnceLock::new();
+static NEXT_HOST_KEY: AtomicUsize = AtomicUsize::new(1);
+
+fn hosts() -> &'static Mutex<HashMap<usize, Arc<AurifyPluginHost>>> {
+    HOSTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn register_host(host: AurifyPluginHost) -> *mut AurifyPluginHost {
+    let key = NEXT_HOST_KEY.fetch_add(1, Ordering::Relaxed);
+    if let Ok(mut table) = hosts().lock() {
+        table.insert(key, Arc::new(host));
+    }
+    key as *mut AurifyPluginHost
+}
+
+fn find_host(handle: *const AurifyPluginHost) -> Option<Arc<AurifyPluginHost>> {
+    hosts().lock().ok()?.get(&(handle as usize)).cloned()
+}
+
+fn take_host(handle: *mut AurifyPluginHost) -> Option<Arc<AurifyPluginHost>> {
+    hosts().lock().ok()?.remove(&(handle as usize))
 }
 
 /// Wraps the raw callback so it can be shared with the server thread. The pointer is
@@ -161,7 +192,7 @@ pub unsafe extern "C" fn aurify_plugin_host_start(
         }
     };
     let platform = PlatformClient::from_launch(&ctx);
-    Box::into_raw(Box::new(AurifyPluginHost { server, platform }))
+    register_host(AurifyPluginHost { server, platform })
 }
 
 fn dispatch(bridge: &CallbackBridge, name: &str, args: &Value) -> Result<Value, OperationError> {
@@ -189,10 +220,10 @@ fn dispatch(bridge: &CallbackBridge, name: &str, args: &Value) -> Result<Value, 
     Ok(envelope.get("result").cloned().unwrap_or(Value::Null))
 }
 
-/// Port the local server is listening on.
+/// Port the local server is listening on. 0 once the host is stopped.
 #[no_mangle]
 pub unsafe extern "C" fn aurify_plugin_host_port(host: *const AurifyPluginHost) -> u16 {
-    host.as_ref().map(|h| h.server.port()).unwrap_or(0)
+    find_host(host).map(|h| h.server.port()).unwrap_or(0)
 }
 
 /// Tells the client whether the plugin is ready. `status` is `starting`, `ready` or
@@ -203,7 +234,7 @@ pub unsafe extern "C" fn aurify_plugin_host_set_health(
     status: *const c_char,
     message: *const c_char,
 ) {
-    let Some(host) = host.as_ref() else { return };
+    let Some(host) = find_host(host) else { return };
     let status = match from_c_str(status) {
         Some("starting") => HealthStatus::Starting,
         Some("ready") => HealthStatus::Ready,
@@ -217,7 +248,7 @@ pub unsafe extern "C" fn aurify_plugin_host_set_health(
 /// `aurify_plugin_platform_call` always fails.
 #[no_mangle]
 pub unsafe extern "C" fn aurify_plugin_host_has_platform(host: *const AurifyPluginHost) -> bool {
-    host.as_ref().map(|h| h.platform.is_some()).unwrap_or(false)
+    find_host(host).map(|h| h.platform.is_some()).unwrap_or(false)
 }
 
 /// One call to the platform on the person's behalf. `body_json` may be NULL. Returns the
@@ -230,8 +261,8 @@ pub unsafe extern "C" fn aurify_plugin_platform_call(
     body_json: *const c_char,
     error_out: *mut *mut c_char,
 ) -> *mut c_char {
-    let Some(host) = host.as_ref() else {
-        put_error(error_out, "host is NULL");
+    let Some(host) = find_host(host) else {
+        put_error(error_out, "host is NULL or already stopped");
         return ptr::null_mut();
     };
     let Some(platform) = host.platform.as_ref() else {
@@ -261,12 +292,13 @@ pub unsafe extern "C" fn aurify_plugin_platform_call(
     }
 }
 
-/// Stops the local server and releases the host. NULL is accepted and ignored.
+/// Stops the local server and releases the host. Blocks until the server thread has
+/// exited. NULL, a host already stopped, and a second call racing the first are all
+/// accepted and do nothing.
 #[no_mangle]
 pub unsafe extern "C" fn aurify_plugin_host_stop(host: *mut AurifyPluginHost) {
-    if !host.is_null() {
-        drop(Box::from_raw(host));
-    }
+    let Some(host) = take_host(host) else { return };
+    host.server.stop();
 }
 
 #[cfg(test)]
@@ -371,6 +403,46 @@ mod tests {
             aurify_plugin_host_stop(ptr::null_mut());
         }
         assert_eq!(calls, 2);
+    }
+
+    #[test]
+    fn a_host_stopped_twice_is_released_once_and_answers_nothing_after() {
+        let port = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port();
+        let launch = CString::new(json!({ "port": port.to_string(), "secret": "0123456789abcdef" }).to_string()).unwrap();
+        let mut calls: u32 = 0;
+        let mut error: *mut c_char = ptr::null_mut();
+        unsafe {
+            let host = aurify_plugin_host_start(
+                manifest().as_ptr(),
+                launch.as_ptr(),
+                Some(echo_operation),
+                &mut calls as *mut u32 as *mut c_void,
+                &mut error,
+            );
+            assert!(!host.is_null());
+            assert_eq!(aurify_plugin_host_port(host), port);
+
+            aurify_plugin_host_stop(host);
+            aurify_plugin_host_stop(host);
+
+            assert_eq!(aurify_plugin_host_port(host), 0);
+            assert!(!aurify_plugin_host_has_platform(host));
+            let mut call_error: *mut c_char = ptr::null_mut();
+            let method = CString::new("GET").unwrap();
+            let path = CString::new("/api/v1/me").unwrap();
+            let answer = aurify_plugin_platform_call(host, method.as_ptr(), path.as_ptr(), ptr::null(), &mut call_error);
+            assert!(answer.is_null());
+            let text = CStr::from_ptr(call_error).to_str().unwrap().to_string();
+            aurify_plugin_string_free(call_error);
+            assert!(text.contains("already stopped"), "{text}");
+        }
+        // The listening socket lives on the accept thread, which stop() wakes but does
+        // not join; it closes the socket a moment later.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            assert!(std::time::Instant::now() < deadline, "the port must close after stop");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
     }
 
     #[test]

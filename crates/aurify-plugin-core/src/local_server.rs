@@ -81,7 +81,7 @@ pub struct LocalServer {
     port: u16,
     health: Arc<Mutex<Health>>,
     stop: Arc<AtomicBool>,
-    thread: Option<JoinHandle<()>>,
+    thread: Mutex<Option<JoinHandle<()>>>,
 }
 
 #[derive(Debug)]
@@ -144,7 +144,7 @@ impl LocalServer {
                 .map_err(|e| StartError::Bind(e.to_string()))?
         };
 
-        Ok(Self { port, health, stop, thread: Some(thread) })
+        Ok(Self { port, health, stop, thread: Mutex::new(Some(thread)) })
     }
 
     pub fn port(&self) -> u16 {
@@ -159,9 +159,13 @@ impl LocalServer {
         }
     }
 
-    pub fn stop(&mut self) {
+    /// Stops serving and waits for the server thread. Every caller returns only once the
+    /// thread has exited, including a second caller that arrives while the first is
+    /// still waiting: the join happens under the lock, so the second one waits for it.
+    pub fn stop(&self) {
         self.stop.store(true, Ordering::Relaxed);
-        if let Some(thread) = self.thread.take() {
+        let Ok(mut thread) = self.thread.lock() else { return };
+        if let Some(thread) = thread.take() {
             let _ = thread.join();
         }
     }
