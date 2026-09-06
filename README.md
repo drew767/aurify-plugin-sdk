@@ -31,6 +31,14 @@ own). The client starts that program with the launch environment described above
 waits for its health probe. A manifest without an entry is refused: a package the client
 cannot start is a package nobody can use.
 
+## What a screen's actions send
+
+The client draws a declared screen with its own components and calls the screen's
+`modelOperation` for the model; after every action it calls that operation again, so
+the plugin, not the client, decides what changed. An action's arguments have one of
+three shapes: a `button` sends `{}`, a `toggle` sends `{"value": true|false}`, and a
+chosen `list` row sends `{"item": <the row's model object>}`.
+
 ## Where a plugin may appear
 
 Four places, and the list is closed — the client renders only what it knows.
