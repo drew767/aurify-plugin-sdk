@@ -44,6 +44,15 @@ A `message-action` slot is a menu item on a message. The client asks the person 
 with `{"message": {"id", "conversationId", "text"}}`; a `text` string in the result is
 shown to the person, anything else just counts as done.
 
+## Apps: a page in a frame
+
+An app (`kind: app`) has no package: `entry.url` names its page, https only, and the
+client shows it in a frame of its own window. Platform access reaches the page by a
+handshake: post `{"type": "aurify.ready"}` to the parent window, and the client answers
+with `{"type": "aurify.platform", "platformUrl", "token", "expiresAt"}` sent to your
+page's origin only. Call the platform with `Authorization: Bearer <token>`; post
+`aurify.ready` again whenever you need a fresh token.
+
 ## Where a plugin may appear
 
 Four places, and the list is closed — the client renders only what it knows.
