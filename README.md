@@ -39,6 +39,11 @@ the plugin, not the client, decides what changed. An action's arguments have one
 three shapes: a `button` sends `{}`, a `toggle` sends `{"value": true|false}`, and a
 chosen `list` row sends `{"item": <the row's model object>}`.
 
+A `message-action` slot is a menu item on a message. The client asks the person for the
+`messages.read` permission the first time it is used, then calls the slot's operation
+with `{"message": {"id", "conversationId", "text"}}`; a `text` string in the result is
+shown to the person, anything else just counts as done.
+
 ## Where a plugin may appear
 
 Four places, and the list is closed — the client renders only what it knows.
