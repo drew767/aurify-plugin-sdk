@@ -185,8 +185,12 @@
       "type": "array",
       "description": "Data kinds the plugin will ask for through the client's permission popup. Anything not listed cannot be asked for.",
       "items": {
-        "type": "string",
-        "pattern": "^[a-z][a-z0-9_.]{2,63}$"
+        "enum": [
+          "identity.basic",
+          "generation.jobs",
+          "messages.read",
+          "files.own"
+        ]
       }
     },
     "resources": {
@@ -229,6 +233,93 @@
           }
         }
       }
+    },
+    "actor": {
+      "enum": [
+        "person",
+        "author"
+      ]
+    },
+    "minClientVersion": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"
+    },
+    "icon": {
+      "type": "string",
+      "maxLength": 16384,
+      "pattern": "^data:image/png;base64,"
+    },
+    "author": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "homepage": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https://"
+    },
+    "network": {
+      "type": "object",
+      "properties": {
+        "allowedHosts": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "permissionRationale": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2048
+      }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "app"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "actor"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "permissions": {
+            "contains": {
+              "const": "messages.read"
+            }
+          }
+        },
+        "required": [
+          "permissions"
+        ]
+      },
+      "then": {
+        "required": [
+          "permissionRationale"
+        ],
+        "properties": {
+          "permissionRationale": {
+            "required": [
+              "messages.read"
+            ]
+          }
+        }
+      }
+    }
+  ]
 }

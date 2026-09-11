@@ -16,6 +16,13 @@ use crate::launch::LaunchContext;
 pub const RENEWED_TOKEN_HEADER: &str = "X-Aurify-Plugin-Token";
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const MAXIMUM_FILE_CHUNK_BYTES: u64 = 8 * 1024 * 1024;
+
+pub struct FileChunk {
+    pub bytes: Vec<u8>,
+    pub content_range: Option<String>,
+    pub content_type: Option<String>,
+}
 
 #[derive(Debug)]
 pub enum PlatformError {
@@ -27,6 +34,7 @@ pub enum PlatformError {
     /// plugin can read the machine code.
     Rejected { status: u16, body: String },
     InvalidJson(String),
+    InvalidRequest(String),
 }
 
 impl std::fmt::Display for PlatformError {
@@ -36,6 +44,7 @@ impl std::fmt::Display for PlatformError {
             PlatformError::Transport(why) => write!(f, "could not reach the platform: {why}"),
             PlatformError::Rejected { status, body } => write!(f, "platform answered {status}: {body}"),
             PlatformError::InvalidJson(why) => write!(f, "platform answered with invalid JSON: {why}"),
+            PlatformError::InvalidRequest(why) => write!(f, "invalid platform request: {why}"),
         }
     }
 }
@@ -49,6 +58,34 @@ pub struct PlatformClient {
 }
 
 impl PlatformClient {
+    pub fn read_file_chunk(&self, media_id: &str, offset: u64, length: u64) -> Result<FileChunk, PlatformError> {
+        use std::io::Read;
+        if media_id.len() != 36 || !media_id.bytes().enumerate().all(|(index, byte)|
+            if [8, 13, 18, 23].contains(&index) { byte == b'-' } else { byte.is_ascii_hexdigit() }) ||
+            length == 0 || length > MAXIMUM_FILE_CHUNK_BYTES || offset.checked_add(length).is_none() {
+            return Err(PlatformError::InvalidRequest("file id or byte range".into()));
+        }
+        let token = self.token.read().map(|token| token.clone()).unwrap_or_default();
+        let response = self.agent.get(&format!("{}/files/{media_id}", self.base_url))
+            .set("Authorization", &format!("Bearer {token}"))
+            .set("Range", &format!("bytes={offset}-{}", offset + length - 1)).call();
+        let response = match response {
+            Ok(response) => response,
+            Err(ureq::Error::Status(status, response)) => return Err(PlatformError::Rejected { status, body: response.into_string().unwrap_or_default() }),
+            Err(ureq::Error::Transport(error)) => return Err(PlatformError::Transport(error.to_string())),
+        };
+        if let Some(renewed) = response.header(RENEWED_TOKEN_HEADER) {
+            if let Ok(mut token) = self.token.write() { *token = renewed.to_string(); }
+        }
+        let content_range = response.header("Content-Range").map(str::to_string);
+        let content_type = response.header("Content-Type").map(str::to_string);
+        let mut bytes = Vec::new();
+        response.into_reader().take(length + 1).read_to_end(&mut bytes)
+            .map_err(|error| PlatformError::Transport(error.to_string()))?;
+        if bytes.len() as u64 > length { return Err(PlatformError::Transport("file range exceeded requested length".into())); }
+        Ok(FileChunk { bytes, content_range, content_type })
+    }
+
     /// `None` when the launch context carries no platform address or token.
     pub fn from_launch(ctx: &LaunchContext) -> Option<Self> {
         let base_url = ctx.platform_url.as_ref()?.trim_end_matches('/').to_string();
@@ -56,7 +93,7 @@ impl PlatformClient {
         Some(Self {
             base_url,
             token: RwLock::new(token),
-            agent: ureq::AgentBuilder::new().timeout(REQUEST_TIMEOUT).build(),
+            agent: ureq::AgentBuilder::new().timeout(REQUEST_TIMEOUT).redirects(0).build(),
         })
     }
 
@@ -107,6 +144,22 @@ mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::thread;
+
+    #[test]
+    fn file_reads_send_a_bounded_range_and_preserve_bytes() {
+        let (port, server) = serve_once(206, "Content-Range: bytes 2-4/5\r\n", "abc");
+        let client = PlatformClient {
+            base_url: format!("http://127.0.0.1:{port}"),
+            token: RwLock::new("plugin-token".into()), agent: ureq::AgentBuilder::new().build(),
+        };
+        let chunk = client.read_file_chunk("00000000-0000-4000-8000-000000000001", 2, 3).unwrap();
+        assert_eq!(chunk.bytes, b"abc");
+        assert_eq!(chunk.content_range.as_deref(), Some("bytes 2-4/5"));
+        let request = server.join().unwrap();
+        assert!(request.contains("Range: bytes=2-4"));
+        assert!(client.read_file_chunk("../file", 0, 1).is_err());
+        assert!(client.read_file_chunk("00000000-0000-4000-8000-000000000001", u64::MAX, 1).is_err());
+    }
 
     /// A one-shot HTTP/1.1 responder: enough to see what the client sent and to hand a
     /// renewed token back.

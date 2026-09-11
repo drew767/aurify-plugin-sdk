@@ -4,7 +4,7 @@
 //! "at the plugin's discretion" — a slot, an operation or a permission that is not in
 //! the manifest cannot be reached at runtime even if the process would answer.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -32,6 +32,38 @@ pub const MAX_SUMMARY_CHARS: usize = 512;
 pub const MAX_VERSION_CHARS: usize = 64;
 pub const MAX_ID_CHARS: usize = 64;
 pub const MIN_ID_CHARS: usize = 3;
+pub const PERMISSIONS: &[&str] = &["identity.basic", "generation.jobs", "messages.read", "files.own"];
+pub const MAX_ICON_BYTES: usize = 16384;
+pub const MAX_RATIONALE_CHARS: usize = 2048;
+
+pub fn is_semver(version: &str) -> bool {
+    let (version, build) = version.split_once('+').map_or((version, None), |(version, build)| (version, Some(build)));
+    let (core, prerelease) = version.split_once('-').map_or((version, None), |(core, prerelease)| (core, Some(prerelease)));
+    let numbers: Vec<_> = core.split('.').collect();
+    numbers.len() == 3 && numbers.iter().all(|number| !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit()) &&
+        (number.len() == 1 || !number.starts_with('0')) && number.parse::<u64>().is_ok()) &&
+        [build, prerelease].into_iter().flatten().all(|suffix| suffix.split('.').all(|part|
+            !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-'))) &&
+        prerelease.is_none_or(|suffix| suffix.split('.').all(|part| !part.bytes().all(|byte| byte.is_ascii_digit()) || part.len() == 1 || !part.starts_with('0')))
+}
+
+fn is_hostname(host: &str) -> bool {
+    !host.is_empty() && host.len() <= 253 && host.split('.').all(|label| !label.is_empty() && label.len() <= 63 &&
+        !label.starts_with('-') && !label.ends_with('-') && label.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-'))
+}
+
+fn is_https_url(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix("https://") else { return false; };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    !url.chars().any(char::is_whitespace) && !url.contains('\\') && is_hostname(authority)
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Network {
+    #[serde(default)]
+    pub allowed_hosts: Vec<String>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -168,6 +200,20 @@ pub struct Entry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Manifest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<String>,
+    #[serde(default)]
+    pub network: Network,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_client_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub homepage: Option<String>,
+    #[serde(default)]
+    pub permission_rationale: HashMap<String, String>,
     pub schema_version: u32,
     /// Stable identifier, `^[a-z][a-z0-9-]{2,63}$`. Never changes across versions.
     pub id: String,
@@ -212,6 +258,40 @@ impl Manifest {
     /// three places that would otherwise drift apart.
     pub fn validate(&self) -> Vec<String> {
         let mut errors = Vec::new();
+        if !is_semver(&self.version) && !(self.id == "local-ai" && self.version == "host-v0.3.0") {
+            errors.push("version must be semantic version without a release prefix".into());
+        }
+        if self.actor.as_deref().is_some_and(|actor| !matches!(actor, "person" | "author"))
+            || (self.kind == Kind::App && self.actor.is_none()) {
+            errors.push("actor must be person or author and is required for apps".into());
+        }
+        if self.min_client_version.as_deref().is_some_and(|version| !is_semver(version)) {
+            errors.push("minClientVersion must be semantic version".into());
+        }
+        if self.homepage.as_deref().is_some_and(|url| !is_https_url(url)) {
+            errors.push("homepage must be an https URL without credentials".into());
+        }
+        if self.author.as_deref().is_some_and(|author| author.is_empty() || author.len() > MAX_TITLE_CHARS) {
+            errors.push("author must be a nonempty short display name".into());
+        }
+        if self.icon.as_deref().is_some_and(|icon| icon.len() > MAX_ICON_BYTES || !icon.starts_with("data:image/png;base64,") ||
+            !icon["data:image/png;base64,".len()..].bytes().all(|byte| byte.is_ascii_alphanumeric() || b"+/=".contains(&byte))) {
+            errors.push("icon must be a PNG data URI of at most 16 KiB".into());
+        }
+        if self.network.allowed_hosts.len() > 64 || self.network.allowed_hosts.iter().any(|host| !is_hostname(host)) {
+            errors.push("network.allowedHosts must contain at most 64 explicit DNS hostnames".into());
+        }
+        for (scope, rationale) in &self.permission_rationale {
+            if !self.permissions.contains(scope) || rationale.trim().is_empty() || rationale.chars().count() > MAX_RATIONALE_CHARS {
+                errors.push("permissionRationale must explain a declared permission in at most 2048 characters".into());
+            }
+        }
+        if self.permissions.iter().any(|scope| scope == "messages.read") && !self.permission_rationale.contains_key("messages.read") {
+            errors.push("messages.read requires permissionRationale".into());
+        }
+        if self.uninstall.remove_paths.iter().any(|path| !is_package_relative_path(path)) {
+            errors.push("uninstall.removePaths must stay inside the plugin data directory".into());
+        }
 
         if self.schema_version != SCHEMA_VERSION {
             errors.push(format!(
@@ -239,8 +319,8 @@ impl Manifest {
             }
         }
         for scope in &self.permissions {
-            if !is_valid_scope(scope) {
-                errors.push(format!("permission {scope:?} must match ^[a-z][a-z0-9_.]{{2,63}}$"));
+            if !PERMISSIONS.contains(&scope.as_str()) {
+                errors.push(format!("permission {scope:?} is not in the platform scope registry"));
             }
         }
         if let Some(gpu) = &self.resources.gpu {
@@ -258,7 +338,7 @@ impl Manifest {
 
     fn validate_app(&self, errors: &mut Vec<String>) {
         match self.entry.as_ref().and_then(|entry| entry.url.as_deref()) {
-            Some(url) if url.starts_with("https://") => {}
+            Some(url) if is_https_url(url) => {}
             Some(_) => errors.push("entry.url must start with https://".to_string()),
             None => errors.push("an app must declare entry.url".to_string()),
         }
@@ -374,20 +454,64 @@ fn is_package_relative_path(path: &str) -> bool {
         && path.split('/').all(|segment| !segment.is_empty() && segment != "." && segment != "..")
 }
 
-fn is_valid_scope(scope: &str) -> bool {
-    let length = scope.len();
-    if !(3..=64).contains(&length) {
-        return false;
+pub fn version_at_least(current: &str, minimum: &str) -> bool {
+    if !is_semver(current) || !is_semver(minimum) { return false; }
+    let split = |version: &str| {
+        let version = version.split('+').next().unwrap();
+        let (core, suffix) = version.split_once('-').unwrap_or((version, ""));
+        (core.split('.').map(|part| part.parse::<u64>().unwrap()).collect::<Vec<_>>(), suffix.to_string())
+    };
+    let (current_core, current_suffix) = split(current);
+    let (minimum_core, minimum_suffix) = split(minimum);
+    match current_core.cmp(&minimum_core) {
+        std::cmp::Ordering::Greater => return true,
+        std::cmp::Ordering::Less => return false,
+        std::cmp::Ordering::Equal => {}
     }
-    let mut chars = scope.chars();
-    let first = chars.next().unwrap_or(' ');
-    first.is_ascii_lowercase()
-        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '.')
+    if current_suffix == minimum_suffix || current_suffix.is_empty() { return true; }
+    if minimum_suffix.is_empty() { return false; }
+    let current_parts: Vec<_> = current_suffix.split('.').collect();
+    let minimum_parts: Vec<_> = minimum_suffix.split('.').collect();
+    for (current, minimum) in current_parts.iter().zip(&minimum_parts) {
+        if current == minimum { continue; }
+        return match (current.parse::<u64>(), minimum.parse::<u64>()) {
+            (Ok(current), Ok(minimum)) => current > minimum,
+            (Ok(_), Err(_)) => false,
+            (Err(_), Ok(_)) => true,
+            (Err(_), Err(_)) => current > minimum,
+        };
+    }
+    current_parts.len() >= minimum_parts.len()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn semantic_versions_compare_prereleases_and_ignore_build_metadata() {
+        assert!(version_at_least("1.2.0", "1.1.9"));
+        assert!(version_at_least("1.0.0+build", "1.0.0-rc.1"));
+        assert!(version_at_least("1.0.0-rc.10", "1.0.0-rc.2"));
+        assert!(!version_at_least("1.0.0-rc.1", "1.0.0"));
+        for invalid in ["1", "01.0.0", "1.0.0-01", "1.0.0-rc..1", "1.0.0+"] {
+            assert!(!is_semver(invalid));
+        }
+    }
+
+    #[test]
+    fn access_metadata_requires_explicit_hosts_and_message_rationale() {
+        let mut manifest = Manifest::from_json(&plugin_json()).unwrap();
+        manifest.permissions.push("files.own".into());
+        assert!(manifest.validate().is_empty());
+        manifest.network.allowed_hosts.push("*.example.com".into());
+        assert!(!manifest.validate().is_empty());
+        manifest.network.allowed_hosts = vec!["api.example.com".into()];
+        manifest.permissions.push("messages.read".into());
+        assert!(!manifest.validate().is_empty());
+        manifest.permission_rationale.insert("messages.read".into(), "Summarize selected messages".into());
+        assert!(manifest.validate().is_empty());
+    }
 
     fn plugin_json() -> String {
         serde_json::json!({
@@ -489,7 +613,7 @@ mod tests {
     #[test]
     fn an_app_needs_an_https_entry_and_no_slots() {
         let app = Manifest::from_json(&serde_json::json!({
-            "schemaVersion": 1, "id": "weather", "version": "1", "kind": "app", "title": "Weather",
+            "schemaVersion": 1, "id": "weather", "version": "1.0.0", "kind": "app", "title": "Weather", "actor": "person",
             "entry": {"url": "http://weather.example/app"}
         }).to_string()).unwrap();
         let errors = app.validate();

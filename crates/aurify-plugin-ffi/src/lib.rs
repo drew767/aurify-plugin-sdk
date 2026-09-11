@@ -324,7 +324,7 @@ mod tests {
     fn manifest() -> CString {
         CString::new(
             json!({
-                "schemaVersion": 1, "id": "echo", "version": "1", "kind": "plugin", "title": "Echo",
+                "schemaVersion": 1, "id": "echo", "version": "1.0.0", "kind": "plugin", "title": "Echo",
                 "entry": {"program": "echo"},
                 "slots": [{"type": "apps-card", "screen": "main"}],
                 "screens": [{"id": "main", "title": "Main", "modelOperation": "echo", "components": []}],
